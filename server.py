@@ -179,6 +179,11 @@ def index():
     return FileResponse(HERE / "index.html")
 
 
+@app.get("/classic")
+def classic():
+    return FileResponse(HERE / "classic.html")
+
+
 @app.websocket("/ws")
 async def ws_chat(ws: WebSocket):
     await ws.accept()
