@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-token_mask.pt
+token_mask*.pt
 .venv/

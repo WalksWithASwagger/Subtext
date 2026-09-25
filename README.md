@@ -180,12 +180,15 @@ python server.py
 
 On Windows, run `python -u -X utf8 server.py`, or use `start.bat`.
 
-**Other models.** The server is configured for Qwen3.5-4B because Neuronpedia
-publishes a pre-fitted lens for it (a 27B lens is also published, for larger
-GPUs — edit `MODEL_NAME`/`LENS_FILE` in `server.py`). Any HuggingFace decoder
-can be used by fitting your own lens with `jlens.fit()`; ~100 prompts produces
-a usable lens, and fitting a 4B-scale model takes on the order of an hour on a
-single consumer GPU. See the [reference repo](https://github.com/anthropics/jacobian-lens)
+**Other models.** The default is Qwen3.5-4B because Neuronpedia publishes a
+pre-fitted lens for it. `SUBTEXT_MODEL` picks another: `Qwen/Qwen3.5-0.8B`
+(1.8 GB to download instead of 9.75 GB, and quick on a laptop) or
+`Qwen/Qwen3.5-27B` for larger GPUs, both with published lenses. For any other
+model with a lens in [neuronpedia/jacobian-lens](https://huggingface.co/neuronpedia/jacobian-lens),
+also set `SUBTEXT_LENS_FILE` to the lens's path inside that repo. Any
+HuggingFace decoder can be used by fitting your own lens with `jlens.fit()`;
+~100 prompts produces a usable lens, and fitting a 4B-scale model takes on the
+order of an hour on a single consumer GPU. See the [reference repo](https://github.com/anthropics/jacobian-lens)
 for details.
 
 **Replays.** The ⤓ session button exports the current conversation — every
