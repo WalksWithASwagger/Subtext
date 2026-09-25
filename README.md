@@ -179,6 +179,8 @@ python server.py
 ```
 
 On Windows, run `python -u -X utf8 server.py`, or use `start.bat`.
+On macOS or Linux, `./start.sh` runs the server and opens the browser once it
+answers.
 
 **Other models.** The default is Qwen3.5-4B because Neuronpedia publishes a
 pre-fitted lens for it. `SUBTEXT_MODEL` picks another: `Qwen/Qwen3.5-0.8B`
