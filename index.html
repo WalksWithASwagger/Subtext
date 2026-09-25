@@ -131,11 +131,11 @@
   #viewtoggle .v.on { color: var(--ink); background: rgba(255,255,255,.08); }
 
   /* tabs on the ledger panel */
-  .cap.tabs { display: flex; gap: 14px; padding-bottom: 6px; }
-  .cap .tab { cursor: pointer; color: var(--faint); transition: color .15s; }
+  .cap.tabs { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 6px; letter-spacing: .08em; }
+  .cap .tab { cursor: pointer; color: var(--faint); transition: color .15s; white-space: nowrap; }
   .cap .tab:hover { color: var(--dim); }
   .cap .tab.on { color: var(--dim); }
-  #words-count { margin-left: 5px; opacity: .7; font-feature-settings: "tnum"; }
+  #words-count, #ahead-count, #unsaid-count { margin-left: 5px; opacity: .7; font-feature-settings: "tnum"; }
 
   /* words statistics table */
   #words { flex: 1; overflow-y: auto; padding: 0 0 10px; scrollbar-width: thin;
@@ -221,9 +221,13 @@
   #stats .cell.ah .l { letter-spacing: .06em; white-space: nowrap; }
 
   /* thought-ahead list */
-  #aheadlist { flex: 1; overflow-y: auto; padding: 0 0 10px; scrollbar-width: thin;
+  #aheadlist, #unsaidlist { flex: 1; overflow-y: auto; padding: 0 0 10px; scrollbar-width: thin;
                scrollbar-color: rgba(255,255,255,.10) transparent; }
-  #aheadlist .empty { padding: 4px 18px; font-size: 11.5px; line-height: 1.55; color: var(--faint); }
+  #aheadlist .empty, #unsaidlist .empty { padding: 4px 18px; font-size: 11.5px; line-height: 1.55; color: var(--faint); }
+  .ah-row.unsaid .w { color: rgba(255,255,255,.85); }
+  .ah-row.unsaid .bar i { background: rgba(255,255,255,.7); }
+  .ah-row.unsaid .ld { width: 72px; white-space: nowrap; }
+  .lg-row.pre { opacity: .3; }
   .ah-row { display: flex; align-items: center; gap: 9px; padding: 2.5px 18px; height: 24px; cursor: pointer; }
   .ah-row:hover { background: rgba(255,255,255,.04); }
   .ah-row .w { font: italic 400 15px var(--serif); width: 110px; white-space: nowrap;
@@ -334,16 +338,20 @@
           layers, still taking your message in. Near the bottom it's late layers, close
           to being spoken. Bigger and brighter means stronger.</li>
         <li><b><span class="rd">Amber</span> while it reads your message,
-          <span class="th">blue</span> while it answers.</b> The amber phase happens
+          <span class="th">blue</span> while it answers.</b> Watch the last amber
+          moments, marked "about to answer": that's often where its verdict forms,
           before a single word of reply exists.</li>
         <li><b>The line along the bottom is what it actually says.</b> A
           <span class="ah">pink</span> word was already on its mind before it said it.
           <span class="ah">+6</span> means it first surfaced six tokens before it was
           said. Click one to jump back to that moment.</li>
+        <li><b>The "unsaid" tab is the subtext.</b> Words it held strongly but never
+          said: the caveats it weighed, the answers it considered and dropped.</li>
       </ol>
       <p class="fine">Pause and scrub the timeline to revisit any moment. Click any floating
-        word to inspect it. This shows what information is available inside the model,
-        not what it feels.</p>
+        word to inspect it. Readouts from before it reaches your words are left out,
+        since they can't be about you. This shows what information is available inside
+        the model, not what it feels.</p>
       <button id="guide-ok">Got it</button>
     </div>
     <div id="transport" class="hidden">
@@ -393,13 +401,15 @@
 
     <div id="ledger-wrap">
       <div class="cap tabs">
-        <span id="tab-ledger" class="tab on">per token</span>
-        <span id="tab-words" class="tab">all words<span id="words-count"></span></span>
+        <span id="tab-ledger" class="tab on">tokens</span>
+        <span id="tab-words" class="tab">words<span id="words-count"></span></span>
         <span id="tab-ahead" class="tab">thought ahead<span id="ahead-count"></span></span>
+        <span id="tab-unsaid" class="tab" title="held strongly, never said">unsaid<span id="unsaid-count"></span></span>
       </div>
       <div id="ledger"></div>
       <div id="words" style="display:none"></div>
       <div id="aheadlist" style="display:none"></div>
+      <div id="unsaidlist" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -757,7 +767,7 @@ function renderTrace() {
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   if (!N || !word) {
     ctx.fillStyle = "rgba(255,255,255,.3)"; ctx.font = `13px Inter, sans-serif`;
-    ctx.fillText(N ? "open “all words” or “thought ahead” and click a word to trace it here"
+    ctx.fillText(N ? "open “words”, “thought ahead” or “unsaid” and click a word to trace it here"
                    : "send a message, then switch to trace", TRACE_X0, (topY + botY) / 2);
     return;
   }
@@ -864,6 +874,7 @@ const log = document.getElementById("log"), inp = document.getElementById("inp")
       ledger = document.getElementById("ledger"), tmRows = document.getElementById("tm-rows");
 const words = document.getElementById("words"), wordsCount = document.getElementById("words-count");
 const aheadList = document.getElementById("aheadlist"), aheadCount = document.getElementById("ahead-count");
+const unsaidList = document.getElementById("unsaidlist"), unsaidCount = document.getElementById("unsaid-count");
 const history = [];
 
 /* ---------------- speech line + thought-ahead detection ----------------
@@ -882,6 +893,31 @@ const STOP = new Set(("the and that this with for you your are was were not but 
   + "doing been being these those such each other more most only own same too through over under after "
   + "before while because since until between against answer answers question response").split(" "));
 const SPECIAL = /^\s*(<\|[^|]*\|>|<\/?think>)\s*$/;   // chat-template tokens the server streams raw
+
+/* Where the user's words start, and where the hand-off to the reply starts.
+   Readouts before the first real token of the message can't be about it (the
+   model hasn't seen it yet), so they stay out of the cloud and the word lists.
+   The hand-off (end-of-message marker through the reply header) is where
+   verdicts often form, so it is labeled rather than hidden. */
+let span = null;   // { n, start, handoff }, extended as frames arrive
+function messageSpan() {
+  if (span && span.n === frames.length) return span;
+  let { start, handoff } = span || { start: -1, handoff: -1 };
+  for (let i = span ? span.n : 0; i < frames.length; i++) {
+    const tok = frames[i].phase === "reading" ? frames[i].tok || "" : null;
+    if (tok === null) continue;
+    if (start < 0) {
+      const role = i > 0 && /<\|im_start\|>/.test(frames[i - 1].tok || "");
+      if (tok.trim() && !SPECIAL.test(tok) && !role) start = i;
+    } else if (handoff < 0 && SPECIAL.test(tok)) handoff = i;
+  }
+  return span = { n: frames.length, start, handoff };
+}
+const isPreMessage = i => frames[i].phase === "reading" && (messageSpan().start < 0 || i < messageSpan().start);
+const isHandoff = i => frames[i].phase === "reading" && messageSpan().handoff >= 0 && i >= messageSpan().handoff;
+const phaseAt = i => isHandoff(i) ? "handoff" : frames[i].phase;
+const TOK_LABEL = { "<|im_start|>": "‹turn›", "<|im_end|>": "‹end›", "<think>": "‹think›", "</think>": "‹/think›" };
+const tokLabel = t => TOK_LABEL[t.trim()] || JSON.stringify(t).slice(1, -1);
 let heard = new Set();   // words in the user's latest message
 const wasHeard = k => heard.has(k) || heard.has(k.replace(/e?s$/, "")) || heard.has(k + "s");
 
@@ -895,6 +931,7 @@ function makeSpeller(sink = {}) {
           this.cur.text += ch; sink.spell && sink.spell(this.cur.text);
         } else { this.finish(); this.text(ch); }
       }
+      if (isPreMessage(i)) return;
       for (const th of f.thoughts) {
         if (strength(th.p) < SEEN_MIN) continue;
         if (!this.seen.has(th.w)) this.seen.set(th.w, []);
@@ -1016,9 +1053,66 @@ function renderAhead() {
   }
 }
 
+/* ---------------- unsaid: the subtext ----------------
+   Words the lens held strongly (peak strength UNSAID_MIN, on its mind for at
+   least UNSAID_TOKENS tokens) that the model never said, minus the user's words
+   and filler. Ranked by peak strength, weighted by how long it was held. */
+const UNSAID_MIN = 0.6, UNSAID_TOKENS = 3;
+function unsaidWords() {
+  // the lens reads single tokens, so "eiff" stands for a spoken or asked "eiffel"
+  const same = (x, k) => x === k || x === k + "s" || k === x + "s" || k === x + "es"
+    || k === x.replace(/y$/, "ies") || (k.length >= 4 && x.startsWith(k));
+  const said = [...replyWords().said.keys()], asked = [...heard];
+  const covered = k => said.some(x => same(x, k)) || asked.some(x => same(x, k));
+  const m = new Map();
+  frames.forEach((f, i) => {
+    if (isPreMessage(i)) return;
+    for (const th of f.thoughts) {
+      const v = strength(th.p);
+      if (v < SEEN_MIN) continue;
+      let e = m.get(th.w);
+      if (!e) m.set(th.w, e = { word: th.w, peak: 0, peakFrame: i, n: 0, phase: f.phase });
+      e.n++;
+      if (v > e.peak) { e.peak = v; e.peakFrame = i; }
+    }
+  });
+  const score = e => e.peak * Math.log2(1 + e.n);
+  const held = [...m.values()]
+    .filter(e => e.peak >= UNSAID_MIN && e.n >= UNSAID_TOKENS && !covered(e.word) && !STOP.has(e.word));
+  return held.filter(e => !held.some(o => o.word.length > e.word.length && same(o.word, e.word)))
+    .sort((a, b) => score(b) - score(a));
+}
+function renderUnsaid() {
+  const list = unsaidWords();
+  unsaidList.innerHTML = "";
+  const note = document.createElement("div"); note.className = "empty";
+  note.textContent = !frames.length ? "Send a message. Words it holds strongly but never says collect here."
+    : !list.length ? "Nothing yet."
+    : doneMsg ? "Held strongly, never said." : "Held strongly, not said so far.";
+  unsaidList.appendChild(note);
+  for (const e of list) {
+    const r = document.createElement("div"); r.className = "ah-row unsaid";
+    const ph = document.createElement("span"); ph.className = "ph";
+    ph.style.background = e.phase === "reading" ? "var(--read)" : "var(--think)";
+    const w = document.createElement("span"); w.className = "w"; w.textContent = e.word;
+    const bar = document.createElement("span"); bar.className = "bar";
+    const fill = document.createElement("i"); fill.style.width = (100 * e.peak).toFixed(0) + "%";
+    bar.appendChild(fill);
+    const ld = document.createElement("span"); ld.className = "ld"; ld.textContent = `held ${e.n} tok`;
+    r.append(ph, w, bar, ld);
+    r.title = `peak strength ${e.peak.toFixed(2)} at token ${e.peakFrame + 1}, on its mind for ${e.n} tokens, `
+      + `first while ${e.phase === "reading" ? "reading your message" : "answering"}. Click to jump to its peak.`;
+    r.addEventListener("click", () => {
+      pause(); following = false; traceWord = e.word;
+      seekTo(e.peakFrame); setLiveState(); selectWord(e.word);
+    });
+    unsaidList.appendChild(r);
+  }
+}
+
 /* ---------------- cumulative word statistics (panel A) ---------------- */
 let panelMode = "ledger";
-const PANELS = { ledger, words, ahead: aheadList };
+const PANELS = { ledger, words, ahead: aheadList, unsaid: unsaidList };
 function setPanel(mode) {
   panelMode = mode;
   for (const [m, el] of Object.entries(PANELS)) {
@@ -1027,16 +1121,19 @@ function setPanel(mode) {
   }
   if (mode === "words") renderWordsTable();
   if (mode === "ahead") renderAhead();
+  if (mode === "unsaid") renderUnsaid();
 }
 document.getElementById("tab-ledger").onclick = () => setPanel("ledger");
 document.getElementById("tab-words").onclick = () => setPanel("words");
 document.getElementById("tab-ahead").onclick = () => setPanel("ahead");
+document.getElementById("tab-unsaid").onclick = () => setPanel("unsaid");
 document.getElementById("c-ahead").onclick = () => setPanel("ahead");
 
 /* aggregate every distinct word across the whole response */
 function computeWordStats() {
   const m = new Map();
   for (let i = 0; i < frames.length; i++) {
+    if (isPreMessage(i)) continue;
     for (const th of frames[i].thoughts) {
       if (th.w.length < 3) continue;
       let e = m.get(th.w);
@@ -1099,16 +1196,23 @@ function addMsg(role, text) {
   m.append(who, body); log.appendChild(m); log.scrollTop = log.scrollHeight;
   return body;
 }
-const PHASE_LABEL = { reading: "reading your message", thinking: "answering", idle: "idle" };
-const setPhase = p => { phaseText.textContent = PHASE_LABEL[p] || p; phaseWrap.className = p === "idle" ? "" : p; };
+const PHASE_LABEL = { reading: "reading your message", handoff: "about to answer", thinking: "answering", idle: "idle" };
+const setPhase = p => {
+  phaseText.textContent = PHASE_LABEL[p] || p;
+  phaseWrap.className = p === "idle" ? "" : p === "handoff" ? "reading" : p;
+};
 const stat = (id, v) => document.getElementById(id).textContent = v;
 
 function buildLedgerRow(f, idx) {
   const r = document.createElement("div"); r.className = "lg-row " + f.phase;
   r.dataset.idx = idx;
+  if (isPreMessage(idx)) {
+    r.classList.add("pre");
+    r.title = "before your words: it hasn't read your message yet, so these readouts aren't about it";
+  } else if (isHandoff(idx)) r.title = "about to answer: your message is done, the reply hasn't started";
   const ph = document.createElement("span"); ph.className = "ph";
   const tk = document.createElement("span"); tk.className = "tk";
-  tk.textContent = JSON.stringify(f.phase === "reading" ? f.tok : f.out).slice(1, -1) || "·";
+  tk.textContent = tokLabel(f.phase === "reading" ? f.tok : f.out) || "·";
   const th = document.createElement("span"); th.className = "th";
   for (const t of f.thoughts.slice(0, 3)) {
     const el = document.createElement("span"); el.className = "t";
@@ -1142,8 +1246,11 @@ function renderTopMind() {
   stat("s-ahead", speech.ahead.length);
   const nAhead = replyWords().ahead.length;
   aheadCount.textContent = nAhead ? " " + nAhead : "";
+  const nUnsaid = unsaidWords().length;
+  unsaidCount.textContent = nUnsaid ? " " + nUnsaid : "";
   if (panelMode === "words") renderWordsTable();
   if (panelMode === "ahead") renderAhead();
+  if (panelMode === "unsaid") renderUnsaid();
 }
 
 /* ---------------- timeline player ----------------
@@ -1182,8 +1289,10 @@ function resetViz() {
   field.dominant = { word: null, run: 0 };
   field.selected = null; field.hovered = null; inspectEl.style.display = "none";
   ledger.innerHTML = ""; tmRows.innerHTML = ""; words.innerHTML = ""; traceWord = null;
-  rewindSpeech(); replyCache = null; aheadCount.textContent = "";
+  rewindSpeech(); replyCache = null; span = null;
+  aheadCount.textContent = ""; unsaidCount.textContent = "";
   if (panelMode === "ahead") renderAhead();
+  if (panelMode === "unsaid") renderUnsaid();
   stat("s-read", 0); stat("s-said", 0); stat("s-thoughts", 0); stat("s-ahead", 0);
   tScrub.max = 0; tScrub.value = 0; tRead.textContent = "tok 0 / 0";
   setPlayIcon(); setLiveState();
@@ -1223,8 +1332,8 @@ function scheduleTick() {
 /* live-forward: apply one new frame with animation intact */
 function advanceOne(i) {
   cursor = i; const f = frames[i];
-  setPhase(f.phase);
-  field.applyFrame(f);
+  setPhase(phaseAt(i));
+  if (!isPreMessage(i)) field.applyFrame(f);
   highlightRow(i);
   if (f.phase === "reading") { nRead++; stat("s-read", nRead); applyReadHighlight(f); }
   if (f.phase === "thinking" && f.out) {
@@ -1248,7 +1357,10 @@ function seekTo(i) {
   field.thoughts.clear(); field.totalSeen = 0; field.pulses.length = 0;
   field.dominant = { word: null, run: 0 };
   rewindSpeech();
-  for (let k = 0; k <= i; k++) { field.applyFrame(frames[k]); speech.observe(frames[k], k); }
+  for (let k = 0; k <= i; k++) {
+    if (!isPreMessage(k)) field.applyFrame(frames[k]);
+    speech.observe(frames[k], k);
+  }
   if (doneMsg && i === frames.length - 1) speech.finish();
   rebuilding = false;
   for (const t of field.thoughts.values()) t.s = t.target;   // snap — frozen frame
@@ -1263,7 +1375,7 @@ function seekTo(i) {
   else if (botBody) botBody.textContent = "";
   rebuildReadHighlight(i);
   renderTopMind();
-  setPhase(frames[i].phase);
+  setPhase(phaseAt(i));
   highlightRow(i);
   updateReadout(); setLiveState();
 }
@@ -1292,7 +1404,7 @@ function updateReadout() {
   const f = frames[cursor];
   const txt = f ? (f.phase === "reading" ? f.tok : f.out) : "";
   tRead.textContent = `tok ${cursor + 1} / ${frames.length}`
-    + (txt ? ` · ${JSON.stringify(txt).slice(1, -1)}` : "");
+    + (txt ? ` · ${tokLabel(txt)}` : "");
 }
 
 /* transport controls */
