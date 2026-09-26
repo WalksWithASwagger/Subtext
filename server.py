@@ -1,12 +1,14 @@
 # Subtext — live Jacobian-lens thought streaming for a local model.
 #
-# Loads Qwen3.5-4B + Anthropic/Neuronpedia's pre-fitted Jacobian lens, serves
+# Loads a Qwen3.5 model (SUBTEXT_MODEL, default Qwen3.5-4B) + Anthropic/Neuronpedia's
+# pre-fitted Jacobian lens, serves
 # a chat websocket. For every token — both while READING your message and while
 # GENERATING its reply — it reads the residual stream at a spread of layers,
 # transports each through J_l into the final-layer basis, decodes to vocabulary
 # words, and streams the top "silent words" to the browser.
 #
 # Run:  python server.py   → http://localhost:8765
+#       SUBTEXT_MODEL=Qwen/Qwen3.5-0.8B python server.py   (a 1.8 GB model, for laptops)
 
 import asyncio
 import json
@@ -32,6 +34,8 @@ LENS_FILES = {
     "Qwen/Qwen3.5-27B": "qwen3.5-27b/jlens/Salesforce-wikitext/Qwen3.5-27B_jacobian_lens.pt",
 }
 MODEL_NAME = os.environ.get("SUBTEXT_MODEL", "Qwen/Qwen3.5-4B")
+# The model's short name, safe in a file name: names the mask cache, and the viewer shows it.
+MODEL_SHORT = re.sub(r"[^\w.-]+", "_", MODEL_NAME.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]) or "model"
 LENS_REPO = "neuronpedia/jacobian-lens"
 LENS_REVISION = "qwen-n1000"
 LENS_FILE = os.environ.get("SUBTEXT_LENS_FILE") or LENS_FILES.get(MODEL_NAME)
@@ -82,11 +86,10 @@ lens.jacobians = {l: lens.jacobians[l].to(DEVICE) for l in VIZ_LAYERS}
 # Display mask: word-like tokens only (the paper's own filter), further
 # restricted to ASCII so the stream reads in English.
 # Built from this model's tokenizer and vocabulary, so cached per model.
-_mask_path = HERE / f"token_mask-{MODEL_NAME.split('/')[-1]}.pt"
+_mask_path = HERE / f"token_mask-{MODEL_SHORT}.pt"
 vocab_size = hf_model.get_output_embeddings().weight.shape[0]
-if _mask_path.exists():
-    display_mask = torch.load(_mask_path, weights_only=True).to(DEVICE)
-else:
+display_mask = torch.load(_mask_path, weights_only=True) if _mask_path.exists() else None
+if display_mask is None or display_mask.shape[0] != vocab_size:  # none yet, or built for another vocabulary
     print("[subtext] building word-like token mask (one-time, ~1 min) ...")
     display_mask = _meaningful_token_mask(tokenizer, vocab_size, torch.device("cpu"))
     for tid in display_mask.nonzero().flatten().tolist():
@@ -99,7 +102,7 @@ else:
                 and re.match(r"^[A-Za-z][A-Za-z'\-]+$", s) and len(s) > 2):
             display_mask[tid] = False
     torch.save(display_mask, _mask_path)
-    display_mask = display_mask.to(DEVICE)
+display_mask = display_mask.to(DEVICE)
 print(f"[subtext] display vocabulary: {int(display_mask.sum())} word tokens")
 
 
@@ -189,7 +192,7 @@ def index():
 async def ws_chat(ws: WebSocket):
     await ws.accept()
     await ws.send_text(json.dumps({
-        "type": "hello", "model": MODEL_NAME.split("/")[-1],
+        "type": "hello", "model": MODEL_SHORT,
         "n_layers": n_layers, "layers": VIZ_LAYERS,
     }))
     try:
