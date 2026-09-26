@@ -165,7 +165,7 @@ KV cache enabled) against the reference `JacobianLens.apply()` on identical
 inputs. Across 4 layers × 3 positions on the walkthrough prompt, top-5
 readouts match exactly, with cosine similarity ≥ 0.99998 between logit
 vectors, and reproduce the expected two-hop intermediates. The audit can be
-re-run at any time with the server stopped.
+re-run at any time with the server stopped; it checks the default Qwen3.5-4B.
 
 ## Setup
 
@@ -173,8 +173,9 @@ Requirements: an NVIDIA GPU with ~10 GB of VRAM (and a CUDA build of PyTorch),
 or an Apple Silicon Mac with 16 GB+ unified memory (PyTorch ≥ 2.3, macOS 14+;
 runs on the `mps` device), plus Python 3.11+. Without either, the server falls
 back to CPU (slow, but usable for smoke tests). The device is picked
-automatically at startup. First launch downloads the model and lens (~9 GB
-total) and builds a display-token mask (~1 minute, cached).
+automatically at startup. First launch downloads the model and lens (about
+10 GB for the default model; see **Other models** for a 1.8 GB one) and builds
+a display-token mask (~1 minute, cached).
 
 ```bash
 git clone https://github.com/ninjahawk/Subtext
@@ -185,13 +186,20 @@ python server.py
 ```
 
 On Windows, run `python -u -X utf8 server.py`, or use `start.bat`.
+On macOS or Linux, `./start.sh` runs the server (with `.venv/bin/python` if
+there is one, otherwise `python3`) and opens the browser once it answers.
 
-**Other models.** The server is configured for Qwen3.5-4B because Neuronpedia
-publishes a pre-fitted lens for it (a 27B lens is also published, for larger
-GPUs — edit `MODEL_NAME`/`LENS_FILE` in `server.py`). Any HuggingFace decoder
-can be used by fitting your own lens with `jlens.fit()`; ~100 prompts produces
-a usable lens, and fitting a 4B-scale model takes on the order of an hour on a
-single consumer GPU. See the [reference repo](https://github.com/anthropics/jacobian-lens)
+**Other models.** The default is Qwen3.5-4B because Neuronpedia publishes a
+pre-fitted lens for it. `SUBTEXT_MODEL` picks another: `Qwen/Qwen3.5-0.8B`
+(1.8 GB to download instead of 9.75 GB, and quick on a laptop) or
+`Qwen/Qwen3.5-27B` for larger GPUs, both with published lenses. For another
+model with a lens on the `qwen-n1000` revision of
+[neuronpedia/jacobian-lens](https://huggingface.co/neuronpedia/jacobian-lens)
+(which also carries its Gemma, Llama, OLMo and GPT-2 lenses), also set
+`SUBTEXT_LENS_FILE` to the lens's path inside that repo. Any
+HuggingFace decoder can be used by fitting your own lens with `jlens.fit()`;
+~100 prompts produces a usable lens, and fitting a 4B-scale model takes on the
+order of an hour on a single consumer GPU. See the [reference repo](https://github.com/anthropics/jacobian-lens)
 for details.
 
 **Replays.** The **save** button (⤓ session in the classic view) exports the
