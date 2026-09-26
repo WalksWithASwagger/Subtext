@@ -162,9 +162,12 @@ def encode_chat(messages: list[dict]) -> tuple[torch.Tensor, int]:
     # Measure the newest message from the end. A template can render a past
     # reply differently once another turn follows it (Qwen drops the empty
     # think block), so the length of the earlier turns alone can overshoot.
-    tail = _template_ids(messages[-1:], True).to(model.input_device)
+    try:
+        tail = _template_ids(messages[-1:], True).to(model.input_device)
+    except Exception:  # some templates refuse a lone message they accept in context
+        tail = ids[:, :0]
     n = tail.shape[1]
-    if n <= ids.shape[1] and torch.equal(ids[0, -n:], tail[0]):
+    if 0 < n <= ids.shape[1] and torch.equal(ids[0, -n:], tail[0]):
         return ids, ids.shape[1] - n
     prev = (_template_ids(messages[:-1], False)
             if len(messages) > 1 else torch.zeros(1, 0, dtype=torch.long))
