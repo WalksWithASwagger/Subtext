@@ -159,6 +159,16 @@ def encode_chat(messages: list[dict]) -> tuple[torch.Tensor, int]:
     """Tokenize the conversation; return (input_ids, index where the newest
     user message starts) so the reading phase covers just what was typed."""
     ids = _template_ids(messages, True).to(model.input_device)
+    # Measure the newest message from the end. A template can render a past
+    # reply differently once another turn follows it (Qwen drops the empty
+    # think block), so the length of the earlier turns alone can overshoot.
+    try:
+        tail = _template_ids(messages[-1:], True).to(model.input_device)
+    except Exception:  # some templates refuse a lone message they accept in context
+        tail = ids[:, :0]
+    n = tail.shape[1]
+    if 0 < n <= ids.shape[1] and torch.equal(ids[0, -n:], tail[0]):
+        return ids, ids.shape[1] - n
     prev = (_template_ids(messages[:-1], False)
             if len(messages) > 1 else torch.zeros(1, 0, dtype=torch.long))
     return ids, min(prev.shape[1], ids.shape[1] - 1)
@@ -168,8 +178,15 @@ app = FastAPI()
 
 
 @app.get("/")
+@app.get("/index.html")
 def index():
     return FileResponse(HERE / "index.html")
+
+
+@app.get("/classic")
+@app.get("/classic.html")
+def classic():
+    return FileResponse(HERE / "classic.html")
 
 
 @app.websocket("/ws")
