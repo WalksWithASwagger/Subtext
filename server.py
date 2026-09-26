@@ -178,11 +178,13 @@ app = FastAPI()
 
 
 @app.get("/")
+@app.get("/index.html")
 def index():
     return FileResponse(HERE / "index.html")
 
 
 @app.get("/classic")
+@app.get("/classic.html")
 def classic():
     return FileResponse(HERE / "classic.html")
 

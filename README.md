@@ -56,8 +56,8 @@ being emitted; two-hop questions surface their unspoken middle term.
 Subtext differs from the interactive readouts already available (e.g. the
 Neuronpedia demo) in that it is conversational and continuous: it renders the
 lens during a live chat, includes the reading phase over the user's message,
-streams at generation speed via a KV cache, and pairs the canvas with a
-per-token ledger and per-word inspector. Sessions can be exported and replayed
+streams at generation speed via a KV cache, and pairs the chart with a
+per-token sounding of every layer and a history for every word. Sessions can be exported and replayed
 in any browser without a GPU.
 
 ## What the lens shows that the output does not
@@ -91,46 +91,52 @@ planning phenomena described in the paper (which used Claude-scale models),
 including the two-hop signature: *Italy* at layer 20 and *euros* at layer 26
 on the country-shaped-like-a-boot question, before generation begins.
 
-## Reading the display
+## Reading the chart
 
-- **Each rendered word is a lens readout, not model output.** It indicates an
-  internal activation disposing the model toward that word.
-- **Vertical position corresponds to layer.** Early layers (perception) are at
-  the top; readouts approach the bottom rail as they approach emission.
-- **Size and opacity encode absolute readout strength.** The display applies a
-  fixed monotone mapping from lens probability; weak readouts are rendered
-  weak. Amber marks readouts taken while reading the user; blue while
-  generating.
-- **Hover** shows a word's per-layer activation profile; **click** opens an
-  inspector with peak strength, mean depth, and strength history.
-- The right panel records everything the canvas curates: the conversation, a
-  live ranking of currently-active readouts, and a per-token ledger.
+The viewer draws the conversation as a sea chart. The original cloud view, with
+its ledger, words tab and trace view (and the stills above), is kept at
+`/classic`.
 
-## Timeline, words, and trace
+- **The waterline is the conversation:** your message as the model reads it,
+  then its reply.
+- **Each word below the waterline is a lens readout, not model output.** It
+  indicates an internal activation disposing the model toward that word.
+- **Depth corresponds to layer.** Shallow water, just under the waterline, is
+  the late layers about to speak; deep water is the early layers still taking
+  the message in.
+- **Size encodes readout strength,** through a fixed monotone mapping from lens
+  probability, so weak readouts are drawn weak. A word held across tokens is
+  drawn as a current.
+- **Thought ahead.** When the model says a word that was already on its mind
+  a few tokens earlier, the current turns vermilion and rises to where the
+  word is said, marked `+N` for the lead.
+- **Unsaid.** A word held strongly for at least three tokens and never said is
+  marked as a wreck.
+- **Hover** a current for its numbers (first on its mind, said, held, peak
+  layer); **click** to pin it.
+- The right panel takes a sounding of the token under the pen, each layer's
+  top words, and switches between the transcript, the thought-ahead list and
+  the unsaid list.
 
-Live playback is fast; nothing is lost. Every frame of the current response is
-kept, so the whole display can be paused and re-inspected.
+## Timeline
 
-- **Scrub the response.** A transport bar under the canvas (step / play /
-  scrubber / speed) seeks to any token; the canvas, top-of-mind ranking,
-  partial reply, and stats reconstruct to that exact moment. Click any ledger
-  row to jump to it. During generation the view rides the live edge — scrub
-  back freely, then hit **live** to catch up. Replays are scrubbable the same
-  way.
-- **The words tab** (beside the ledger) aggregates every word the lens read
-  out during the response — how many tokens it was active, its peak layer and
-  strength — ranked by presence. Click a word to jump to its peak moment and
-  load it in the trace view.
-- **The trace view** (cloud / trace, top left) plots one word's readout
-  strength across layers × tokens: the x-axis is shared with the scrubber,
-  amber while reading, blue while generating. It shows a concept climbing the
-  stack — and igniting across it just before being spoken — structure the
-  instantaneous cloud cannot show. Click anywhere on it to seek.
+Every frame is kept, so the whole conversation can be paused and re-read.
+
+- The transport under the chart plays, steps, jumps to the live edge and
+  changes speed, and the minimap beside it holds the whole conversation; drag
+  across it to scrub. The chart, sounding and lists redraw for exactly that
+  token. During generation the pen rides the live edge: step back freely, then
+  hit **live** to catch up. Replays work the same way.
+- Drag or scroll the chart to pan; ctrl-scroll or `+` / `-` zooms. Click a word
+  in the transcript, or a column of the chart, to move the pen there.
+- Keys: space plays or pauses, the arrows step (shift for ten), Home and End
+  jump, `1` `2` `3` switch the lists, `N` switches between the day and night
+  chart, `?` opens the guide.
 
 ## Method
 
 ```
-browser (single HTML file)  ⇐ websocket ⇐  server.py
+browser (index.html, classic.html)  ⇐ websocket ⇐  server.py
     Qwen3.5-4B (bf16, HF transformers, KV cache)
     pre-fitted Jacobian lens: neuronpedia/jacobian-lens, revision qwen-n1000
     per token: residual hooks at 9 layers → J_l transport → unembed
@@ -188,9 +194,10 @@ a usable lens, and fitting a 4B-scale model takes on the order of an hour on a
 single consumer GPU. See the [reference repo](https://github.com/anthropics/jacobian-lens)
 for details.
 
-**Replays.** The ⤓ session button exports the current conversation — every
-lens frame included — as a JSON file. Open the app with `?replay=<file-url>`
-to play one back with live pacing, no GPU required; that is exactly what the
+**Replays.** The **save** button (⤓ session in the classic view) exports the
+current conversation, every lens frame included, as a JSON file. Open the app
+with `?replay=<file-url>`, or drop the file onto the page, to play it back with
+live pacing, no GPU required; that is exactly what the
 [hosted demo](https://ninjahawk.github.io/Subtext/) is.
 
 ## Limitations
