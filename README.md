@@ -164,8 +164,18 @@ the readout itself.
 KV cache enabled) against the reference `JacobianLens.apply()` on identical
 inputs. Across 4 layers × 3 positions on the walkthrough prompt, top-5
 readouts match exactly, with cosine similarity ≥ 0.99998 between logit
-vectors, and reproduce the expected two-hop intermediates. The audit can be
-re-run at any time with the server stopped; it checks the default Qwen3.5-4B.
+vectors, and reproduce the expected two-hop intermediates. Those figures are
+for the default Qwen3.5-4B, at layers 8, 14, 20 and 26.
+
+The audit checks whichever model `SUBTEXT_MODEL` picks, at the lens layers
+nearest a quarter, 45%, 65% and 85% of the way through the network. On
+Qwen3.5-0.8B (layers 6, 10, 15 and 20 of 24) all twelve top-5 readouts match
+as well, with cosine similarity ≥ 0.99995. Re-run it at any time with the
+server stopped:
+
+```bash
+SUBTEXT_MODEL=Qwen/Qwen3.5-0.8B python verify_accuracy.py
+```
 
 ## Setup
 
