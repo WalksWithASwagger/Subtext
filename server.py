@@ -12,7 +12,6 @@
 
 import asyncio
 import json
-import os
 import pathlib
 import re
 
@@ -25,23 +24,7 @@ from fastapi.responses import FileResponse
 import jlens
 from jlens.vis import _meaningful_token_mask
 
-# Pick the model with SUBTEXT_MODEL. These three have a pre-fitted lens in
-# LENS_REPO; for any other model, also point SUBTEXT_LENS_FILE at its lens
-# (a path inside LENS_REPO).
-LENS_FILES = {
-    "Qwen/Qwen3.5-0.8B": "qwen3.5-0.8b/jlens/Salesforce-wikitext/Qwen3.5-0.8B_jacobian_lens.pt",
-    "Qwen/Qwen3.5-4B": "qwen3.5-4b/jlens/Salesforce-wikitext/Qwen3.5-4B_jacobian_lens_n1000.pt",
-    "Qwen/Qwen3.5-27B": "qwen3.5-27b/jlens/Salesforce-wikitext/Qwen3.5-27B_jacobian_lens.pt",
-}
-MODEL_NAME = os.environ.get("SUBTEXT_MODEL", "Qwen/Qwen3.5-4B")
-# The model's short name, safe in a file name: names the mask cache, and the viewer shows it.
-MODEL_SHORT = re.sub(r"[^\w.-]+", "_", MODEL_NAME.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]) or "model"
-LENS_REPO = "neuronpedia/jacobian-lens"
-LENS_REVISION = "qwen-n1000"
-LENS_FILE = os.environ.get("SUBTEXT_LENS_FILE") or LENS_FILES.get(MODEL_NAME)
-if not LENS_FILE:
-    raise SystemExit(f"[subtext] no pre-fitted lens known for {MODEL_NAME}. Set SUBTEXT_LENS_FILE "
-                     f"to its path inside {LENS_REPO}, or pick one of: {', '.join(LENS_FILES)}")
+from models import LENS_FILE, LENS_REPO, LENS_REVISION, MODEL_NAME, MODEL_SHORT, pick_layers
 
 HERE = pathlib.Path(__file__).parent
 PORT = 8765
@@ -75,8 +58,7 @@ lens = jlens.JacobianLens.from_pretrained(
 
 # Pick actual fitted layers closest to the requested depth fractions.
 n_layers = model.n_layers
-_wanted = [round(f * (n_layers - 1)) for f in LAYER_FRACS]
-VIZ_LAYERS = sorted({min(lens.source_layers, key=lambda s, w=w: abs(s - w)) for w in _wanted})
+VIZ_LAYERS = pick_layers(lens.source_layers, n_layers, LAYER_FRACS)
 LAYER_DEPTH = {l: l / (n_layers - 1) for l in VIZ_LAYERS}
 print(f"[subtext] reading layers {VIZ_LAYERS} of {n_layers}")
 
