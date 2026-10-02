@@ -1112,8 +1112,54 @@ function drawPen(now) {
 }
 
 /* ---------------- the whole voyage in miniature ---------------- */
-let miniDirty = true, miniBaseKey = "", miniBaseAt = 0;
+let miniDirty = true, miniBaseKey = "";
 const miniBase = document.createElement("canvas"), mbctx = miniBase.getContext("2d");
+// Every sighting is a faint bw × 1.4 rect of ink at alpha s × .5; a long session has tens of thousands,
+// and drawing each with fillRect took ~4 ms. Instead their coverage is accumulated per device pixel,
+// composited the way source-over would (1 − a stays a running product), and put in one ImageData.
+// A pixel a rect only partly covers both ways gets min(x, y) coverage, not x × y: that's how
+// Chrome's canvas antialiases these thin rects, and the overview should look as it did.
+const sightings = new WeakMap();   // frame -> [strength, depth, ...] of its thoughts at or above SEEN_MIN; frames never change
+function sightingsOf(f) {
+  let a = sightings.get(f);
+  if (!a) {
+    const out = [];
+    for (const th of f.thoughts) { const s = strength(th.p); if (s >= SEEN_MIN) out.push(s, th.d); }
+    sightings.set(f, a = out);
+  }
+  return a;
+}
+let miniKeep = null, miniPix = null, miniPx32 = null, miniXc = null;
+function paintSightings(h, sc) {
+  const W = miniBase.width, H = miniBase.height;
+  if (!miniPix || miniPix.width !== W || miniPix.height !== H) {
+    miniPix = new ImageData(W, H); miniKeep = new Float32Array(W * H); miniPx32 = new Uint32Array(miniPix.data.buffer);
+    miniXc = new Float32Array(W + 1);
+  }
+  const keep = miniKeep.fill(1), xc = miniXc, span = dHi - dLo;
+  for (const T of turns) {
+    const start = spanOf(T).start;
+    for (let i = 0; i < T.frames.length; i++) {
+      const f = T.frames[i];
+      if (f.phase === "reading" && (start < 0 || i < start)) continue;   // isPre
+      const sg = sightingsOf(f);
+      if (!sg.length) continue;
+      const g = T.g0 + i, bw = Math.max(1, COL.w[g] * sc), X0 = (cx(g) * sc - bw / 2) * DPR, X1 = X0 + bw * DPR;
+      const px0 = Math.max(0, Math.floor(X0)), n = Math.min(W, Math.ceil(X1)) - px0;
+      for (let j = 0; j < n; j++) xc[j] = Math.min(X1, px0 + j + 1) - Math.max(X0, px0 + j);
+      for (let k = 0; k < sg.length; k += 2) {
+        const Y0 = lerp(h - 5, 5, span > 0 ? clamp((sg[k + 1] - dLo) / span) : .5) * DPR, Y1 = Y0 + 1.4 * DPR, a = sg[k] * .5;
+        for (let py = Math.max(0, Math.floor(Y0)), py1 = Math.min(H, Math.ceil(Y1)); py < py1; py++) {
+          const cy = Math.min(Y1, py + 1) - Math.max(Y0, py);
+          for (let j = 0, q = py * W + px0; j < n; j++, q++) keep[q] *= 1 - a * (xc[j] < cy ? xc[j] : cy);
+        }
+      }
+    }
+  }
+  const [r, gr, b] = hexRGB(P.ink), ink = b << 16 | gr << 8 | r;   // RGBA bytes read as a little-endian word
+  for (let k = 0; k < keep.length; k++) miniPx32[k] = ink | (255.5 - keep[k] * 255) << 24;
+  mbctx.putImageData(miniPix, 0, 0);
+}
 function renderMini() {
   const w = mini.clientWidth, h = mini.clientHeight;
   if (!w || !h) return;
@@ -1123,32 +1169,19 @@ function renderMini() {
   if (!G.length) return;
   const sc = w / Math.max(worldEnd, viewW());
   const key = `${G.length}|${worldEnd}|${w}|${h}|${P.ink}|${turns.map(T => !!T.done).join()}`;
-  if (key !== miniBaseKey && busy && performance.now() - miniBaseAt < 250) miniDirty = true;
-  else if (key !== miniBaseKey) {
-    miniBaseKey = key; miniBaseAt = performance.now();
-    miniBase.width = mini.width; miniBase.height = mini.height;
+  if (key !== miniBaseKey) {   // about 1 ms on a long session, so it keeps up with a streaming reply unthrottled
+    miniBaseKey = key;
+    // putImageData overwrites every pixel, so the canvas only needs resizing (which reallocates it) when the size changes
+    if (miniBase.width !== mini.width || miniBase.height !== mini.height) { miniBase.width = mini.width; miniBase.height = mini.height; }
+    paintSightings(h, sc);
     mbctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    mbctx.clearRect(0, 0, w, h);
-    mbctx.fillStyle = P.ink;
-    for (let g = 0; g < G.length; g++) {
-      const { f, T, i } = G[g];
-      if (isPre(T, i)) continue;
-      const x = cx(g) * sc, bw = Math.max(1, COL.w[g] * sc);
-      for (const th of f.thoughts) {
-        const s = strength(th.p);
-        if (s < SEEN_MIN) continue;
-        const f01 = dHi > dLo ? clamp((th.d - dLo) / (dHi - dLo)) : .5;
-        mbctx.globalAlpha = s * .5;
-        mbctx.fillRect(x - bw / 2, lerp(h - 5, 5, f01), bw, 1.4);
-      }
-    }
     for (const T of turns) {
       const dv = derive(T);
       mbctx.globalAlpha = 1; mbctx.fillStyle = P.course;
       for (const e of dv.sp.ahead) mbctx.fillRect(cx(T.g0 + e.said) * sc - 1, 0, 2, 5);
       if (T.done) {
         mbctx.fillStyle = P["ink-2"];
-        for (const v of dv.veins) if (v.wreck) mbctx.fillRect(cx(v.wreck.at.g) * sc - 1, h - 4, 3, 1.5);
+        for (const v of dv.wrecks || (dv.wrecks = dv.veins.filter(v => v.wreck))) mbctx.fillRect(cx(v.wreck.at.g) * sc - 1, h - 4, 3, 1.5);
       }
       if (T.g0 > 0) { mbctx.fillStyle = P["ink-3"]; mbctx.fillRect((COL.x[T.g0] - TURN_GAP * zoom / 2) * sc, 0, 1, h); }
     }
