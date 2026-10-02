@@ -8,15 +8,14 @@ import torch
 import transformers
 
 import jlens
+from models import LENS_FILE, LENS_REPO, LENS_REVISION, MODEL_NAME, pick_layers   # SUBTEXT_MODEL, like server.py
 
-MODEL_NAME = "Qwen/Qwen3.5-4B"
-LENS_REPO = "neuronpedia/jacobian-lens"
-LENS_REVISION = "qwen-n1000"
-LENS_FILE = "qwen3.5-4b/jlens/Salesforce-wikitext/Qwen3.5-4B_jacobian_lens_n1000.pt"
 # The walkthrough's own example: expects currency-related readouts (lira/euro)
 # at mid layers at the position before final.
 PROMPT = "Fact: The currency used in the country shaped like a boot is"
-LAYERS = [8, 14, 20, 26]
+# Compare at the lens's layers nearest these fractions of the network's depth:
+# 8, 14, 20 and 26 on the 4B's 32 layers.
+LAYER_FRACS = [0.25, 0.45, 0.65, 0.85]
 POSITIONS = [-4, -2, -1]
 TOPK = 5
 
@@ -30,6 +29,7 @@ else:
 # bf16 matmuls are slow/patchy on CPU; use fp32 there.
 DTYPE = torch.bfloat16 if DEVICE != "cpu" else torch.float32
 
+print(f"model {MODEL_NAME}, lens {LENS_FILE}")
 print("loading model + lens ...")
 hf = transformers.AutoModelForCausalLM.from_pretrained(
     MODEL_NAME, dtype=DTYPE).to(DEVICE)
@@ -37,6 +37,8 @@ tok = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
 model = jlens.from_hf(hf, tok)
 lens = jlens.JacobianLens.from_pretrained(
     LENS_REPO, filename=LENS_FILE, revision=LENS_REVISION)
+LAYERS = pick_layers(lens.source_layers, model.n_layers, LAYER_FRACS)
+print(f"comparing layers {LAYERS} of {model.n_layers}")
 
 # ---- path A: reference (jlens.apply — no cache, jlens's own forward)
 ref_logits, _, input_ids = lens.apply(
