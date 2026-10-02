@@ -156,6 +156,7 @@
   .tk { cursor: pointer; border-radius: 1px; transition: background .12s; }
   .tk:hover { background: var(--hair); }
   .tk.later { opacity: .3; }
+  .tk.yet { display: none; }   /* reply tokens past the pen: built, not shown */
   .tk.now { background: var(--ink); color: var(--paper); }
   .tk.ahead { color: var(--course); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
   .tk.now.ahead { color: var(--paper); background: var(--course); }
@@ -1252,58 +1253,80 @@ function shownText(T, i, s = spanOf(T)) {
   if (f.phase === "reading") return s.start >= 0 && i >= s.start && (s.handoff < 0 || i < s.handoff) ? f.tok : null;
   return SPECIAL.test(f.out || "") ? null : (f.out || "").replace(/[*#`]/g, "") || null;
 }
-const transcriptOf = new WeakMap();   // turns the pen isn't in look the same from frame to frame
-function renderTranscript() {
-  lists.innerHTML = "";
-  if (!turns.length) { lists.append(el("p", "empty", "The conversation will be written out here. Click any word to take its sounding.")); return; }
-  turns.forEach((T, ti) => {
-    const where = cursor > lastG(T) ? "past" : cursor < T.g0 ? "future" : "";
-    const key = where && `${where}|${T.frames.length}|${!!T.done}|${turns.length > 1}`;
-    const kept = key && transcriptOf.get(T);
-    if (kept && kept.key === key) { lists.append(kept.node); return; }
-    const d = derive(T), s = spanOf(T);
-    const wrap = el("div", "turn");
-    wrap.append(el("div", "who", turns.length > 1 ? `you · ${ti + 1}` : "you"));
-    const you = el("div", "you");
-    T.frames.forEach((f, i) => {   // your words as tokens, so any of them can be sounded
-      const tok = f.phase === "reading" ? shownText(T, i, s) : null;
-      if (tok === null) return;
-      const g = T.g0 + i, t = el("span", "tk" + (g > cursor ? " later" : "") + (g === cursor ? " now" : ""), tok);
-      t.dataset.g = g; t.tabIndex = -1; you.append(t);
-      if (g === cursor) t.setAttribute("aria-current", "true");
-    });
-    if (!you.childNodes.length) you.textContent = T.user;
-    wrap.append(you);
-    const reply = el("div", "reply");
-    const byStart = new Map(d.sp.ahead.map(e => [e.said, e]));
-    let open = null;
-    T.frames.forEach((f, i) => {
-      const g = T.g0 + i;
-      if (f.phase !== "thinking" || g > cursor) return;
-      const txt = shownText(T, i, s);
-      if (!txt) return;
-      const e = byStart.get(i);
-      if (e && cursor >= T.g0 + e.at) open = e;
-      const t = el("span", "tk" + (open ? " ahead" : "") + (g === cursor ? " now" : ""), txt);
-      t.dataset.g = g; t.tabIndex = -1;
-      if (g === cursor) t.setAttribute("aria-current", "true");
-      if (open && i === open.last) { t.append(el("sup", "", "+" + open.lead)); open = null; }
-      reply.append(t);
-    });
-    if (reply.childNodes.length) wrap.append(el("div", "who", "model"), reply);
-    if (key) transcriptOf.set(T, { key, node: wrap });
-    lists.append(wrap);
+// The transcript keeps one .turn node per turn. A turn is rebuilt only when its own content changes
+// (a new frame, the reply ending, or a second turn numbering it); moving the pen only flips the
+// classes of the tokens whose state changes. Every reply token is built, and those past the pen hidden.
+const turnView = new WeakMap();   // T -> { node, sig, spans, byI, byStart, model, reply, firstReply, at }
+const NOW = 1, LATER = 2, AHEAD = 4, YET = 8, TK_CLASSES = [[NOW, "now"], [LATER, "later"], [AHEAD, "ahead"], [YET, "yet"]];
+function buildTurn(T, ti, node) {
+  const d = derive(T), s = spanOf(T), spans = [], byI = [];
+  const you = el("div", "you"), model = el("div", "who", "model"), reply = el("div", "reply");
+  T.frames.forEach((f, i) => {
+    const txt = shownText(T, i, s);
+    if (txt === null) return;
+    const t = el("span", "tk", txt);
+    t.dataset.g = T.g0 + i; t.tabIndex = -1;
+    (f.phase === "reading" ? you : reply).append(t);
+    spans.push(byI[i] = { t, i, g: T.g0 + i, reply: f.phase === "thinking", c: 0, sup: null });
   });
+  if (!you.childNodes.length) you.textContent = T.user;
+  node.replaceChildren(el("div", "who", turns.length > 1 ? `you · ${ti + 1}` : "you"), you, model, reply);
+  return { node, spans, byI, byStart: new Map(d.sp.ahead.map(e => [e.said, e])), model, reply,
+           firstReply: spans.find(r => r.reply), at: NaN };
+}
+// The same rules the transcript was always drawn by, applied to the turn's existing tokens.
+function paintTurn(T, v) {
+  let open = null;
+  for (const r of v.spans) {
+    let c, sup = null;
+    if (!r.reply) c = (r.g > cursor ? LATER : 0) | (r.g === cursor ? NOW : 0);
+    else if (r.g > cursor) c = YET;
+    else {
+      const e = v.byStart.get(r.i);
+      if (e && cursor >= T.g0 + e.at) open = e;
+      c = (open ? AHEAD : 0) | (r.g === cursor ? NOW : 0);
+      if (open && r.i === open.last) { sup = "+" + open.lead; open = null; }
+    }
+    const x = c ^ r.c;
+    if (x) {
+      for (const [bit, name] of TK_CLASSES) if (x & bit) r.t.classList.toggle(name, !!(c & bit));
+      if (x & NOW) c & NOW ? r.t.setAttribute("aria-current", "true") : r.t.removeAttribute("aria-current");
+      r.c = c;
+    }
+    if (sup !== r.sup) {
+      if (r.sup !== null) r.t.lastChild.remove();
+      if (sup !== null) r.t.append(el("sup", "", sup));
+      r.sup = sup;
+    }
+  }
+  v.model.hidden = v.reply.hidden = !(v.firstReply && v.firstReply.g <= cursor);
+  v.at = cursor;
+}
+function renderTranscript() {
+  if (!turns.length) { lists.replaceChildren(el("p", "empty", "The conversation will be written out here. Click any word to take its sounding.")); return; }
+  const nodes = turns.map((T, ti) => {
+    const sig = `${T.frames.length}|${!!T.done}|${turns.length > 1}`;
+    let v = turnView.get(T);
+    if (!v || v.sig !== sig) { v = buildTurn(T, ti, v ? v.node : el("div", "turn")); v.sig = sig; turnView.set(T, v); }
+    const end = lastG(T);   // a turn wholly before or wholly after both pens looks the same at either
+    if (v.at !== cursor && !(v.at < T.g0 && cursor < T.g0) && !(v.at > end && cursor > end)) paintTurn(T, v);
+    return v.node;
+  });
+  const kids = lists.children;
+  let k = 0;
+  while (k < kids.length && kids[k] === nodes[k]) k++;
+  if (k < kids.length) lists.replaceChildren(...nodes);   // another lens, or a reset conversation, was showing
+  else for (; k < nodes.length; k++) lists.append(nodes[k]);   // new turns join at the end
   placeTabStop();
 }
 // The transcript is one Tab stop (a roving tabindex): the pen's token or, when the pen is on a
 // chat-template token the transcript doesn't show, the nearest shown token before it.
 let tabStop = null;
 function placeTabStop() {
-  if (tabStop) tabStop.tabIndex = -1;   // it may sit in a cached turn that gets reused
-  let t = lists.querySelector(".tk.now");
-  if (!t && cursor >= 0) for (const k of lists.querySelectorAll(".tk")) { if (+k.dataset.g < cursor) t = k; else break; }
-  tabStop = t || lists.querySelector(".tk");
+  if (tabStop) tabStop.tabIndex = -1;
+  tabStop = null;
+  for (let g = cursor; g >= 0 && !tabStop; g--) { const r = turnView.get(G[g].T).byI[G[g].i]; if (r) tabStop = r.t; }
+  if (!tabStop) for (const T of turns) { const r = turnView.get(T).spans.find(r => !(r.c & YET)); if (r) { tabStop = r.t; break; } }
   if (tabStop) tabStop.tabIndex = 0;
 }
 // With focus in the transcript the arrows, Home and End move through the tokens it shows, so the pen
