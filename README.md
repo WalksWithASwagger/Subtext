@@ -115,8 +115,11 @@ its ledger, words tab and trace view (and the stills above), is kept at
 - **Hover** a current for its numbers (first on its mind, said, held, peak
   layer); **click** to pin it.
 - The right panel takes a sounding of the token under the pen, each layer's
-  top words, and switches between the transcript, the thought-ahead list and
-  the unsaid list.
+  top words, and switches between the transcript, the thought-ahead list, the
+  unsaid list and the words list (keys 1 to 4). The words list is every word
+  the lens read out in each turn, ranked by how many tokens it stayed on the
+  model's mind, with its peak layer, like the classic view's words tab. Each
+  turn shows its top ten until you open the rest.
 
 ## Timeline
 
