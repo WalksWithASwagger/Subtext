@@ -40,16 +40,17 @@
   .cap { font: 500 10px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
 
   /* ---------- header ---------- */
-  #hdr { display: flex; align-items: baseline; gap: 16px; height: 47px; padding: 17px 20px 0;
+  #hdr { display: flex; align-items: baseline; gap: 16px; height: 47px; padding: 17px 20px 0; min-width: 0;
          border-bottom: 1px solid var(--hair); white-space: nowrap; }
   #hdr .mark { font: 600 14px/1 var(--serif); letter-spacing: .3em; text-transform: uppercase; }
   #hdr .sub { font: italic 400 14.5px/1 var(--serif); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
-  #hdr nav { margin-left: auto; display: flex; align-items: baseline; gap: 18px;
+  #hdr nav { margin-left: auto; min-width: 0; display: flex; align-items: baseline; gap: 18px;
              font: 11px/1 var(--mono); color: var(--ink-2); }
   #hdr nav a, #hdr nav button { color: var(--ink-2); text-decoration: none; font: inherit;
                                 border-bottom: 1px solid transparent; padding-bottom: 2px; }
   #hdr nav a:hover, #hdr nav button:hover { color: var(--ink); border-color: var(--ink-3); }
-  #status { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; }
+  #status { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; max-width: 360px; }
+  #status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }   /* a replay's file name or host can be long */
   #status .ping { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); position: relative; flex: none; }
   #status:not([data-phase="idle"]) .ping { background: var(--ink); }
   #status:not([data-phase="idle"]) .ping::after { content: ""; position: absolute; inset: -5px; border-radius: 50%;
@@ -214,7 +215,7 @@
     #hdr { flex-wrap: wrap; gap: 8px 14px; height: auto; padding: 12px 16px 10px; }
     #hdr .sub, #classic { display: none; }
     #hdr nav { gap: 8px 14px; margin-left: 0; width: 100%; flex-wrap: wrap; }
-    #status { min-width: 0; width: 100%; }
+    #status { min-width: 0; width: 100%; max-width: none; }
     #app { display: block; }
     #stage-col { height: 64vh; min-height: 380px; border-right: 0; border-bottom: 1px solid var(--hair); }
     #stage { touch-action: pan-y; }
@@ -534,6 +535,8 @@ const revealAt = [];       // when frame g was revealed by playback; -Infinity w
 let cursor = -1, playing = false, following = true, camFollow = true, speed = 1, busy = false, tickTimer = null;
 let lens = "all", focus = null, hover = null, hoverG = -1;
 let connected = false, replaying = false;
+let replayFrom = "", replayNote = "";   // set when a replay isn't this site's own file: its model name is only that file's claim
+let notice = "", noticeTimer = 0;       // a passing message that outranks the status for a few seconds
 const history = [], recorded = [];
 
 function newTurn(text) {
@@ -1609,8 +1612,13 @@ function setStatus() {
   let ph = "idle";
   if (cursor >= 0 && (busy || playing)) ph = phaseOf(G[cursor].T, G[cursor].i);
   statusEl.dataset.phase = ph;
-  statusText.textContent = ph !== "idle" ? PHASE_LABEL[ph]
-    : replaying ? `${MODEL} · replay` : connected ? `${MODEL} · ${LAYERS.length} layers` : "connecting…";
+  statusText.textContent = notice || (ph !== "idle" ? PHASE_LABEL[ph]
+    : replaying ? (replayFrom ? `replay · from ${replayFrom}` : `${MODEL} · replay`)
+    : connected ? `${MODEL} · ${LAYERS.length} layers` : "connecting…");
+}
+function flash(msg) {
+  notice = msg; setStatus();
+  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice = ""; setStatus(); }, 4000);
 }
 function scheduleTick() {
   clearTimeout(tickTimer);
@@ -1688,11 +1696,22 @@ function ingestDone(m) {
 /* ---------------- socket, replays, saving ---------------- */
 const WS_URL = location.protocol === "file:" || !location.host ? "ws://127.0.0.1:8765/ws" : `ws://${location.host}/ws`;
 const REPLAY = new URLSearchParams(location.search).get("replay");
+// Where a ?replay= session lives: "" for this site's own files, the host of another site,
+// "a link" for a data: URL, and undefined when the value isn't a URL at all.
+function replayOrigin(src) {
+  let u;
+  try { u = new URL(src, location.href); } catch { return undefined; }
+  return u.protocol === "data:" ? "a link" : u.origin === location.origin ? "" : u.host || u.protocol.slice(0, -1);
+}
+function setLegend() {
+  const who = MODEL || "a language model";
+  $("#ct-model").textContent = replayNote ? `a replay of ${who}, ${replayNote}` : `a sounding of ${who}`;
+}
 let ws = null, reconnectTimer = 0;
 function handle(m) {
   if (m.type === "hello") {
     setLayers(m.layers, m.n_layers); MODEL = m.model;
-    $("#ct-model").textContent = `a sounding of ${m.model}`;
+    setLegend();
   } else if (m.type === "user") newTurn(m.text);
   else if (m.type === "frame") ingestFrame(m);
   else if (m.type === "done") ingestDone(m);
@@ -1748,14 +1767,18 @@ const isFrame = m => (m.phase === "reading" || m.phase === "thinking") && typeof
   && Array.isArray(m.thoughts) && m.thoughts.every(t => t && typeof t.w === "string" && Number.isFinite(t.p) && Number.isFinite(t.d) && Array.isArray(t.prof));
 const isSession = ev => Array.isArray(ev) && ev.some(m => m && m.type === "frame") && ev.every(m => m && (
   m.type === "frame" ? isFrame(m) : m.type === "hello" ? Array.isArray(m.layers) : (m.type === "user" || m.type === "done") && typeof m.text === "string"));
-async function startReplay(src) {
-  let events = src;
+async function startReplay(src, fileName) {
+  let events = src, from = fileName || "", note = fileName ? `from ${fileName}` : "";
   if (!Array.isArray(events)) {
+    from = replayOrigin(src);
+    if (from === undefined) { flash("that replay link isn't a URL"); return false; }
+    note = from === "a link" ? "from a link" : from ? `recorded elsewhere (${from})` : "";
     try { const r = await fetch(src); events = r.ok ? await r.json() : null; } catch { events = null; }
   }
-  if (!isSession(events)) { statusText.textContent = "that isn't a Subtext session file"; return false; }
+  if (!isSession(events)) { flash("that isn't a Subtext session file"); return false; }
   const gen = ++replayGen;
-  replaying = true;
+  replaying = true; replayFrom = from; replayNote = note;
+  MODEL = ""; setLegend();   // a file without a hello mustn't inherit the last model's name
   clearTimeout(reconnectTimer);
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   $("#inp").disabled = true;
@@ -1791,8 +1814,8 @@ addEventListener("drop", async e => {
   e.preventDefault();
   let events = null;
   try { events = JSON.parse(await f.text()); } catch {}
-  if (!isSession(events)) { statusText.textContent = "that isn't a Subtext session file"; return; }
-  resetAll(); startReplay(events);
+  if (!isSession(events)) { flash("that isn't a Subtext session file"); return; }
+  resetAll(); startReplay(events, f.name);
 });
 
 /* ---------------- guide, legend, keys ---------------- */
